@@ -13,11 +13,12 @@ logger = logging.getLogger(__name__)
 def transcribe(audio_bytes: bytes, language_hint: str | None = None) -> tuple[str, str]:
     """Transcribe audio bytes to text using Google Cloud Speech-to-Text.
 
-    If language_hint is provided (user chose a language), it is used as the primary
-    language with no alternatives — giving accurate single-language transcription.
+    If language_hint is provided (user chose a language), it is used as the sole
+    language — giving accurate single-language transcription.
 
-    If no hint, auto-detects among all supported languages by running multiple
-    recognition passes (Google STT limits alternatives to 3, so we batch).
+    If no hint, auto-detects by running STT independently for EACH supported
+    language and picking the one with the highest confidence. This avoids
+    Google STT's bias toward the primary language in multi-language mode.
 
     Returns (transcribed_text, detected_language_code).
     """
@@ -25,66 +26,53 @@ def transcribe(audio_bytes: bytes, language_hint: str | None = None) -> tuple[st
     audio = speech.RecognitionAudio(content=audio_bytes)
 
     if language_hint and language_hint in SUPPORTED_LANGUAGES:
-        # User explicitly chose a language — use it directly
         logger.info("STT: using user-selected language %s", language_hint)
-        config = speech.RecognitionConfig(
-            encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-            sample_rate_hertz=16000,
-            language_code=language_hint,
-            enable_automatic_punctuation=True,
-        )
-        response = client.recognize(config=config, audio=audio)
-        if not response.results:
-            logger.warning("STT: no results for language %s", language_hint)
-            return "", language_hint
-        transcript = response.results[0].alternatives[0].transcript
-        confidence = response.results[0].alternatives[0].confidence
-        logger.info("STT: language=%s confidence=%.3f transcript=%s", language_hint, confidence, transcript[:80])
+        transcript, _confidence = _recognize_single(client, audio, language_hint)
         return transcript, language_hint
 
-    # Auto-detect: run recognition passes to cover all languages.
-    # Google STT allows 1 primary + up to 3 alternative_language_codes = 4 per call.
-    # With 5 languages we need 2 passes to cover all of them.
+    # Auto-detect: run STT once per language, compare confidence scores
     logger.info("STT: auto-detecting language among %s", DEFAULT_LANGUAGE_CODES)
-    batches = _batch_language_codes(DEFAULT_LANGUAGE_CODES, batch_size=4)
 
     best_transcript = ""
     best_confidence = -1.0
     best_language = DEFAULT_LANGUAGE_CODES[0]
 
-    for batch in batches:
-        primary = batch[0]
-        alternatives = batch[1:]
-
-        config = speech.RecognitionConfig(
-            encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-            sample_rate_hertz=16000,
-            language_code=primary,
-            alternative_language_codes=alternatives,
-            enable_automatic_punctuation=True,
-        )
-
-        response = client.recognize(config=config, audio=audio)
-        if not response.results:
-            continue
-
-        result = response.results[0]
-        alt = result.alternatives[0]
-        confidence = alt.confidence
-
-        detected_raw = getattr(result, "language_code", primary)
+    for lang_code in DEFAULT_LANGUAGE_CODES:
+        transcript, confidence = _recognize_single(client, audio, lang_code)
         logger.info(
-            "STT batch [%s]: detected=%s confidence=%.3f transcript=%s",
-            "+".join(batch), detected_raw, confidence, alt.transcript[:80],
+            "STT [%s]: confidence=%.3f transcript=%s",
+            lang_code, confidence, transcript[:80] if transcript else "(empty)",
         )
 
         if confidence > best_confidence:
             best_confidence = confidence
-            best_transcript = alt.transcript
-            best_language = _normalize_language_code(detected_raw)
+            best_transcript = transcript
+            best_language = lang_code
 
-    logger.info("STT: final detected language=%s confidence=%.3f", best_language, best_confidence)
+    logger.info("STT: winner language=%s confidence=%.3f", best_language, best_confidence)
     return best_transcript, best_language
+
+
+def _recognize_single(
+    client: speech.SpeechClient,
+    audio: speech.RecognitionAudio,
+    language_code: str,
+) -> tuple[str, float]:
+    """Run STT for a single language. Returns (transcript, confidence)."""
+    config = speech.RecognitionConfig(
+        encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+        sample_rate_hertz=16000,
+        language_code=language_code,
+        enable_automatic_punctuation=True,
+    )
+
+    response = client.recognize(config=config, audio=audio)
+
+    if not response.results:
+        return "", 0.0
+
+    alt = response.results[0].alternatives[0]
+    return alt.transcript, alt.confidence
 
 
 def synthesize(text: str, language_code: str) -> bytes:
@@ -119,14 +107,6 @@ def synthesize(text: str, language_code: str) -> bytes:
     )
 
     return response.audio_content
-
-
-def _batch_language_codes(codes: list[str], batch_size: int = 4) -> list[list[str]]:
-    """Split language codes into batches for STT calls (max 4 per call)."""
-    batches = []
-    for i in range(0, len(codes), batch_size):
-        batches.append(codes[i : i + batch_size])
-    return batches
 
 
 def _normalize_language_code(detected: str) -> str:
