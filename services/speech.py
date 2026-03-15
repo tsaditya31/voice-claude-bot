@@ -5,7 +5,7 @@ import logging
 from google.cloud import speech_v1 as speech
 from google.cloud import texttospeech_v1 as tts
 
-from config import SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE_CODES
+from config import SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE_CODES, AUTO_DETECT_LANGUAGE_CODES
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +31,13 @@ def transcribe(audio_bytes: bytes, language_hint: str | None = None) -> tuple[st
         return transcript, language_hint
 
     # Auto-detect: run STT once per language, compare confidence scores
-    logger.info("STT: auto-detecting language among %s", DEFAULT_LANGUAGE_CODES)
+    logger.info("STT: auto-detecting language among %s", AUTO_DETECT_LANGUAGE_CODES)
 
     best_transcript = ""
     best_confidence = -1.0
-    best_language = DEFAULT_LANGUAGE_CODES[0]
+    best_language = AUTO_DETECT_LANGUAGE_CODES[0]
 
-    for lang_code in DEFAULT_LANGUAGE_CODES:
+    for lang_code in AUTO_DETECT_LANGUAGE_CODES:
         transcript, confidence = _recognize_single(client, audio, lang_code)
         logger.info(
             "STT [%s]: confidence=%.3f transcript=%s",

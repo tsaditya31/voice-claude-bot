@@ -67,13 +67,13 @@ def test_transcribe_with_hint_no_results(mock_client_cls):
 def test_transcribe_autodetect_picks_highest_confidence(mock_client_cls):
     """Without a hint, auto-detect runs STT per language and picks highest confidence."""
     from services.speech import transcribe
-    from config import DEFAULT_LANGUAGE_CODES
+    from config import AUTO_DETECT_LANGUAGE_CODES
 
     mock_client = mock_client_cls.return_value
 
     # Build one response per language; Spanish has the highest confidence
     responses = []
-    for lang_code in DEFAULT_LANGUAGE_CODES:
+    for lang_code in AUTO_DETECT_LANGUAGE_CODES:
         if lang_code == "es-ES":
             responses.append(_make_stt_response(
                 [_make_stt_result("Hola mundo", 0.92, "es-ES")]
@@ -90,14 +90,14 @@ def test_transcribe_autodetect_picks_highest_confidence(mock_client_cls):
     assert text == "Hola mundo"
     assert lang == "es-ES"
     # One STT call per supported language
-    assert mock_client.recognize.call_count == len(DEFAULT_LANGUAGE_CODES)
+    assert mock_client.recognize.call_count == len(AUTO_DETECT_LANGUAGE_CODES)
 
 
 @patch("services.speech.speech.SpeechClient")
 def test_transcribe_autodetect_no_results_any_language(mock_client_cls):
     """When all languages return no results, return empty string + default language."""
     from services.speech import transcribe
-    from config import DEFAULT_LANGUAGE_CODES
+    from config import AUTO_DETECT_LANGUAGE_CODES
 
     mock_client = mock_client_cls.return_value
     mock_client.recognize.return_value = _make_stt_response([])
@@ -105,21 +105,21 @@ def test_transcribe_autodetect_no_results_any_language(mock_client_cls):
     text, lang = transcribe(b"silence", language_hint=None)
 
     assert text == ""
-    assert lang == DEFAULT_LANGUAGE_CODES[0]
-    assert mock_client.recognize.call_count == len(DEFAULT_LANGUAGE_CODES)
+    assert lang == AUTO_DETECT_LANGUAGE_CODES[0]
+    assert mock_client.recognize.call_count == len(AUTO_DETECT_LANGUAGE_CODES)
 
 
 @patch("services.speech.speech.SpeechClient")
 def test_transcribe_autodetect_skips_empty_results(mock_client_cls):
     """If most languages return nothing and one returns results, use that one."""
     from services.speech import transcribe
-    from config import DEFAULT_LANGUAGE_CODES
+    from config import AUTO_DETECT_LANGUAGE_CODES
 
     mock_client = mock_client_cls.return_value
 
     # All return empty except Hindi
     responses = []
-    for lang_code in DEFAULT_LANGUAGE_CODES:
+    for lang_code in AUTO_DETECT_LANGUAGE_CODES:
         if lang_code == "hi-IN":
             responses.append(_make_stt_response(
                 [_make_stt_result("नमस्ते", 0.88, "hi-IN")]
@@ -139,7 +139,7 @@ def test_transcribe_autodetect_skips_empty_results(mock_client_cls):
 def test_transcribe_autodetect_each_language_called_independently(mock_client_cls):
     """Verify each language gets its own independent STT call."""
     from services.speech import transcribe
-    from config import DEFAULT_LANGUAGE_CODES
+    from config import AUTO_DETECT_LANGUAGE_CODES
 
     mock_client = mock_client_cls.return_value
     mock_client.recognize.return_value = _make_stt_response(
@@ -149,10 +149,10 @@ def test_transcribe_autodetect_each_language_called_independently(mock_client_cl
     transcribe(b"fake-audio", language_hint=None)
 
     # Verify each call used a single language_code (no alternative_language_codes)
-    assert mock_client.recognize.call_count == len(DEFAULT_LANGUAGE_CODES)
+    assert mock_client.recognize.call_count == len(AUTO_DETECT_LANGUAGE_CODES)
     for i, call in enumerate(mock_client.recognize.call_args_list):
         config = call[1]["config"]
-        assert config.language_code == DEFAULT_LANGUAGE_CODES[i]
+        assert config.language_code == AUTO_DETECT_LANGUAGE_CODES[i]
 
 
 # ── transcribe with unsupported hint falls back to auto-detect ──────
@@ -161,13 +161,13 @@ def test_transcribe_autodetect_each_language_called_independently(mock_client_cl
 def test_transcribe_invalid_hint_falls_back_to_autodetect(mock_client_cls):
     """An unsupported language hint triggers auto-detect path."""
     from services.speech import transcribe
-    from config import DEFAULT_LANGUAGE_CODES
+    from config import AUTO_DETECT_LANGUAGE_CODES
 
     mock_client = mock_client_cls.return_value
 
     # fil-PH should win with highest confidence
     responses = []
-    for lang_code in DEFAULT_LANGUAGE_CODES:
+    for lang_code in AUTO_DETECT_LANGUAGE_CODES:
         if lang_code == "fil-PH":
             responses.append(_make_stt_response(
                 [_make_stt_result("Kumusta", 0.85, "fil-PH")]
@@ -183,7 +183,7 @@ def test_transcribe_invalid_hint_falls_back_to_autodetect(mock_client_cls):
     assert text == "Kumusta"
     assert lang == "fil-PH"
     # Should have run auto-detect (one call per language)
-    assert mock_client.recognize.call_count == len(DEFAULT_LANGUAGE_CODES)
+    assert mock_client.recognize.call_count == len(AUTO_DETECT_LANGUAGE_CODES)
 
 
 # ── synthesize ──────────────────────────────────────────────────────
@@ -239,6 +239,6 @@ def test_normalize_language_code():
 
 def test_normalize_language_code_unknown_returns_default():
     from services.speech import _normalize_language_code
-    from config import DEFAULT_LANGUAGE_CODES
+    from config import AUTO_DETECT_LANGUAGE_CODES
 
-    assert _normalize_language_code("xx-XX") == DEFAULT_LANGUAGE_CODES[0]
+    assert _normalize_language_code("xx-XX") == AUTO_DETECT_LANGUAGE_CODES[0]

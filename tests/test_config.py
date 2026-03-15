@@ -1,6 +1,6 @@
 """Tests for config module."""
 
-from config import SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE_CODES, CONVERSATION_HISTORY_LIMIT
+from config import SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE_CODES, AUTO_DETECT_LANGUAGE_CODES, CONVERSATION_HISTORY_LIMIT
 
 
 def test_all_languages_have_required_keys():
@@ -31,3 +31,9 @@ def test_conversation_history_limit_is_positive():
 def test_all_expected_languages_present():
     expected = {"ta-IN", "hi-IN", "es-ES", "ceb-PH", "fil-PH"}
     assert expected == set(SUPPORTED_LANGUAGES.keys())
+
+
+def test_auto_detect_excludes_cebuano():
+    """Cebuano is excluded from auto-detect due to inflated STT confidence."""
+    assert "ceb-PH" not in AUTO_DETECT_LANGUAGE_CODES
+    assert "ceb-PH" in DEFAULT_LANGUAGE_CODES  # still available for manual selection

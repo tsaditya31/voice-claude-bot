@@ -47,7 +47,15 @@ SUPPORTED_LANGUAGES = {
     },
 }
 
+# All language codes (for /language menu and TTS)
 DEFAULT_LANGUAGE_CODES = list(SUPPORTED_LANGUAGES.keys())
+
+# Languages used for auto-detection only.
+# Cebuano is excluded — its STT model returns inflated confidence scores that
+# win over other languages. Users can still select it manually via /language.
+AUTO_DETECT_LANGUAGE_CODES = [
+    code for code in DEFAULT_LANGUAGE_CODES if code != "ceb-PH"
+]
 
 MAX_AUDIO_DURATION_SECONDS = 120
 
