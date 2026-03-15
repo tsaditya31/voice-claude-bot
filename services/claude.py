@@ -8,6 +8,9 @@ client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 # Per-user conversation history: {user_id: [{"role": ..., "content": ...}, ...]}
 _conversation_history: dict[int, list[dict]] = {}
 
+# Track last detected language per user to reset history on language switch
+_user_language: dict[int, str] = {}
+
 SYSTEM_PROMPT = """You are a helpful multilingual assistant. The user will send you a query in {language_name} ({language_code}).
 
 Instructions:
@@ -34,6 +37,12 @@ def ask(query_text: str, language_code: str, user_id: int) -> tuple[str, str]:
         language_name=language_name,
         language_code=language_code,
     )
+
+    # Clear history when user switches language to avoid cross-language confusion
+    prev_lang = _user_language.get(user_id)
+    if prev_lang and prev_lang != language_code:
+        _conversation_history.pop(user_id, None)
+    _user_language[user_id] = language_code
 
     # Get or create conversation history for this user
     history = _conversation_history.setdefault(user_id, [])
@@ -75,6 +84,7 @@ def ask(query_text: str, language_code: str, user_id: int) -> tuple[str, str]:
 def clear_history(user_id: int) -> None:
     """Clear conversation history for a user."""
     _conversation_history.pop(user_id, None)
+    _user_language.pop(user_id, None)
 
 
 def _parse_response(text: str) -> tuple[str, str]:
