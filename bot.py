@@ -3,8 +3,15 @@ import logging
 import tempfile
 
 from pydub import AudioSegment
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from config import TELEGRAM_BOT_TOKEN, SUPPORTED_LANGUAGES, MAX_AUDIO_DURATION_SECONDS
 from services import speech, claude
@@ -16,18 +23,48 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _language_keyboard() -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(f"{cfg['label']} ({cfg['name']})", callback_data=f"lang:{code}")]
+        for code, cfg in SUPPORTED_LANGUAGES.items()
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command."""
-    lang_options = "\n".join(
-        f"  • {cfg['label']} ({cfg['name']})"
-        for cfg in SUPPORTED_LANGUAGES.values()
-    )
     await update.message.reply_text(
-        f"Welcome! Send me a voice message in one of these languages and I'll respond:\n\n"
-        f"{lang_options}\n\n"
-        f"Just record a voice message with your question and I'll reply with both voice and text!\n\n"
+        "Welcome! First, choose your language:",
+        reply_markup=_language_keyboard(),
+    )
+
+
+async def language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /language command — change language."""
+    current = context.user_data.get("language")
+    current_name = SUPPORTED_LANGUAGES.get(current, {}).get("name", "not set")
+    await update.message.reply_text(
+        f"Current language: {current_name}\n\nChoose a new language:",
+        reply_markup=_language_keyboard(),
+    )
+
+
+async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle language selection from inline keyboard."""
+    query = update.callback_query
+    await query.answer()
+
+    lang_code = query.data.removeprefix("lang:")
+    if lang_code not in SUPPORTED_LANGUAGES:
+        return
+
+    context.user_data["language"] = lang_code
+    lang_name = SUPPORTED_LANGUAGES[lang_code]["name"]
+    await query.edit_message_text(
+        f"Language set to {lang_name}.\n\n"
+        f"Now send me a voice message and I'll reply with voice + text!\n\n"
         f"Commands:\n"
-        f"/start — Show this message\n"
+        f"/language — Change language\n"
         f"/clear — Clear conversation history"
     )
 
@@ -43,6 +80,15 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Handle incoming voice messages."""
     voice = update.message.voice
     if not voice:
+        return
+
+    # Require language selection first
+    user_lang = context.user_data.get("language")
+    if not user_lang:
+        await update.message.reply_text(
+            "Please choose your language first:",
+            reply_markup=_language_keyboard(),
+        )
         return
 
     if voice.duration > MAX_AUDIO_DURATION_SECONDS:
@@ -61,9 +107,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         # 2. Convert OGG -> WAV for Google STT
         wav_bytes = _ogg_to_wav(bytes(ogg_bytes))
 
-        # 3. Transcribe
-        language_hint = context.user_data.get("language")
-        transcript, detected_lang = speech.transcribe(wav_bytes, language_hint)
+        # 3. Transcribe using the user's chosen language
+        transcript, detected_lang = speech.transcribe(wav_bytes, user_lang)
 
         if not transcript:
             await update.message.reply_text(
@@ -73,18 +118,15 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         logger.info("Transcribed (%s): %s", detected_lang, transcript[:100])
 
-        # Store detected language for future messages
-        context.user_data["language"] = detected_lang
-
-        # 4. Ask Claude (with conversation history)
+        # 4. Ask Claude (with conversation history) — always use the user's chosen language
         user_id = update.effective_user.id
-        full_response, summary = claude.ask(transcript, detected_lang, user_id)
+        full_response, summary = claude.ask(transcript, user_lang, user_id)
 
         # 5. Synthesize response to speech
-        audio_bytes = speech.synthesize(full_response, detected_lang)
+        audio_bytes = speech.synthesize(full_response, user_lang)
 
         # 6. Send voice response + text summary
-        lang_name = SUPPORTED_LANGUAGES[detected_lang]["name"]
+        lang_name = SUPPORTED_LANGUAGES[user_lang]["name"]
         caption = f"[{lang_name}] {summary}"
         # Telegram caption limit is 1024 chars
         if len(caption) > 1024:
@@ -120,7 +162,9 @@ def main() -> None:
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("language", language))
     app.add_handler(CommandHandler("clear", clear))
+    app.add_handler(CallbackQueryHandler(language_callback, pattern=r"^lang:"))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
     logger.info("Bot started")
