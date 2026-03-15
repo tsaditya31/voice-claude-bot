@@ -1,5 +1,6 @@
 import io
 import logging
+import re
 import tempfile
 
 from pydub import AudioSegment
@@ -143,8 +144,18 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         user_id = update.effective_user.id
         full_response, summary = claude.ask(transcript, detected_lang, user_id)
 
+        logger.info(
+            "Claude response: %d chars, summary: %d chars",
+            len(full_response), len(summary),
+        )
+
         # 5. Synthesize response to speech
         audio_bytes = speech.synthesize(full_response, detected_lang)
+
+        logger.info(
+            "TTS audio: %d bytes (%.1f KB) for %d chars of text",
+            len(audio_bytes), len(audio_bytes) / 1024, len(full_response),
+        )
 
         # 6. Send voice response + text summary
         lang_name = SUPPORTED_LANGUAGES[detected_lang]["name"]
@@ -158,11 +169,49 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             caption=caption,
         )
 
+        # 7. Extract and send references (URLs, phone numbers, emails) as text
+        references = _extract_references(full_response)
+        if references:
+            ref_text = "\n".join(references)
+            await update.message.reply_text(
+                f"📎 References:\n{ref_text}",
+                disable_web_page_preview=True,
+            )
+
     except Exception:
         logger.exception("Error processing voice message")
         await update.message.reply_text(
             "Sorry, something went wrong processing your message. Please try again."
         )
+
+
+def _extract_references(text: str) -> list[str]:
+    """Extract URLs, email addresses, and phone numbers from text."""
+    refs = []
+
+    # URLs (http/https/www)
+    urls = re.findall(r'https?://[^\s<>\"\')\]]+|www\.[^\s<>\"\')\]]+', text)
+    for url in urls:
+        url = url.rstrip(".,;:!?")
+        if url not in refs:
+            refs.append(url)
+
+    # Email addresses
+    emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
+    for email in emails:
+        if email not in refs:
+            refs.append(email)
+
+    # Phone numbers (international and local formats)
+    phones = re.findall(r'(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}', text)
+    for phone in phones:
+        phone = phone.strip()
+        # Only include if it looks like a real phone number (7+ digits)
+        digits = re.sub(r'\D', '', phone)
+        if len(digits) >= 7 and phone not in refs:
+            refs.append(phone)
+
+    return refs
 
 
 def _ogg_to_wav(ogg_bytes: bytes) -> bytes:
