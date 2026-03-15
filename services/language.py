@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from config import SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE_CODES
 
 
