@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 import re
@@ -118,7 +119,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
-    await update.message.reply_text("Processing your voice message...")
+    status_msg = await update.message.reply_text("Processing your voice message...")
 
     try:
         # 1. Download the voice file (OGG format from Telegram)
@@ -133,32 +134,55 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         transcript, detected_lang = speech.transcribe(wav_bytes, language_hint)
 
         if not transcript:
-            await update.message.reply_text(
+            await status_msg.edit_text(
                 "Sorry, I couldn't understand the audio. Please try again with a clearer recording."
             )
             return
 
         logger.info("Transcribed (%s): %s", detected_lang, transcript[:100])
 
-        # 4. Ask Claude (with conversation history)
-        user_id = update.effective_user.id
-        full_response, summary = claude.ask(transcript, detected_lang, user_id)
-
-        logger.info(
-            "Claude response: %d chars, summary: %d chars",
-            len(full_response), len(summary),
-        )
-
-        # 5. Synthesize response to speech
-        audio_bytes = speech.synthesize(full_response, detected_lang)
-
-        logger.info(
-            "TTS audio: %d bytes (%.1f KB) for %d chars of text",
-            len(audio_bytes), len(audio_bytes) / 1024, len(full_response),
-        )
-
-        # 6. Send voice response + text summary
+        # 4. Start heartbeat — update status message every 2s while preparing response
         lang_name = SUPPORTED_LANGUAGES[detected_lang]["name"]
+        heartbeat_task = asyncio.create_task(
+            _heartbeat(status_msg, lang_name)
+        )
+
+        try:
+            # 5. Ask Claude (with conversation history)
+            user_id = update.effective_user.id
+            full_response, summary = await asyncio.get_event_loop().run_in_executor(
+                None, claude.ask, transcript, detected_lang, user_id
+            )
+
+            logger.info(
+                "Claude response: %d chars, summary: %d chars",
+                len(full_response), len(summary),
+            )
+
+            # 6. Synthesize response to speech
+            audio_bytes = await asyncio.get_event_loop().run_in_executor(
+                None, speech.synthesize, full_response, detected_lang
+            )
+
+            logger.info(
+                "TTS audio: %d bytes (%.1f KB) for %d chars of text",
+                len(audio_bytes), len(audio_bytes) / 1024, len(full_response),
+            )
+        finally:
+            # Stop heartbeat
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+
+        # 7. Delete the status message
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+
+        # 8. Send voice response + text summary
         caption = f"[{lang_name}] {summary}"
         # Telegram caption limit is 1024 chars
         if len(caption) > 1024:
@@ -169,7 +193,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             caption=caption,
         )
 
-        # 7. Extract and send references (URLs, phone numbers, emails) as text
+        # 9. Extract and send references (URLs, phone numbers, emails) as text
         references = _extract_references(full_response)
         if references:
             ref_text = "\n".join(references)
@@ -180,9 +204,29 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     except Exception:
         logger.exception("Error processing voice message")
-        await update.message.reply_text(
-            "Sorry, something went wrong processing your message. Please try again."
-        )
+        try:
+            await status_msg.edit_text(
+                "Sorry, something went wrong processing your message. Please try again."
+            )
+        except Exception:
+            await update.message.reply_text(
+                "Sorry, something went wrong processing your message. Please try again."
+            )
+
+
+async def _heartbeat(status_msg, lang_name: str) -> None:
+    """Edit the status message every 2s to show progress while preparing response."""
+    dots = [".", "..", "..."]
+    i = 0
+    while True:
+        await asyncio.sleep(2)
+        try:
+            await status_msg.edit_text(
+                f"[{lang_name}] Preparing your response, please wait{dots[i % len(dots)]}"
+            )
+        except Exception:
+            pass  # Message may have been deleted or edit conflicts — ignore
+        i += 1
 
 
 def _extract_references(text: str) -> list[str]:

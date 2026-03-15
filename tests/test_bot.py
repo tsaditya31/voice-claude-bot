@@ -120,10 +120,11 @@ async def test_handle_voice_empty_transcript(mock_speech, mock_ogg):
 
     await handle_voice(update, context)
 
-    # Should have two reply_text calls: "Processing..." and "couldn't understand"
-    assert update.message.reply_text.call_count == 2
-    last_call = update.message.reply_text.call_args_list[-1][0][0]
-    assert "couldn't understand" in last_call
+    # "Processing..." is the initial reply_text, then edit_text is called for the error
+    assert update.message.reply_text.call_count == 1
+    status_msg = update.message.reply_text.return_value
+    status_msg.edit_text.assert_called_once()
+    assert "couldn't understand" in status_msg.edit_text.call_args[0][0]
 
 
 @pytest.mark.asyncio
