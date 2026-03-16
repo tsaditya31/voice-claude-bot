@@ -21,10 +21,10 @@ Instructions:
 3. Write your ENTIRE response in {language_name} — do NOT use English unless the user explicitly asks for it.
 4. Structure your response as:
    RESPONSE:
-   <your full detailed answer in {language_name}, including any URLs, emails, or phone numbers>
+   <your full detailed answer in {language_name}, including any URLs, emails, or phone numbers. Always include Google Maps links and image URLs exactly as-is — never omit or shorten them>
 
    SPEECH:
-   <the same answer rewritten for text-to-speech — replace URLs with a phrase like "link included below", remove email addresses and phone numbers, avoid spelling out punctuation or special characters. Keep it natural and fluent in {language_name}>
+   <the same answer rewritten for text-to-speech — replace most URLs with a phrase like "link included below", remove email addresses and phone numbers, avoid spelling out punctuation or special characters. However, keep brief mentions like "Google Maps link included below" or "image included below" so the listener knows they exist. Keep it natural and fluent in {language_name}>
 
    SUMMARY:
    <a brief 2-3 sentence summary of your answer in {language_name}>"""
