@@ -1,3 +1,5 @@
+import re
+
 import anthropic
 
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CLAUDE_MAX_TOKENS, CONVERSATION_HISTORY_LIMIT
@@ -19,17 +21,20 @@ Instructions:
 3. Write your ENTIRE response in {language_name} — do NOT use English unless the user explicitly asks for it.
 4. Structure your response as:
    RESPONSE:
-   <your full detailed answer in {language_name}>
+   <your full detailed answer in {language_name}, including any URLs, emails, or phone numbers>
+
+   SPEECH:
+   <the same answer rewritten for text-to-speech — replace URLs with a phrase like "link included below", remove email addresses and phone numbers, avoid spelling out punctuation or special characters. Keep it natural and fluent in {language_name}>
 
    SUMMARY:
    <a brief 2-3 sentence summary of your answer in {language_name}>"""
 
 
-def ask(query_text: str, language_code: str, user_id: int) -> tuple[str, str]:
+def ask(query_text: str, language_code: str, user_id: int) -> tuple[str, str, str]:
     """Send a query to Claude and get a response in the same language.
 
     Maintains conversation history per user (last CONVERSATION_HISTORY_LIMIT exchanges).
-    Returns (full_response_text, summary_text) both in the original language.
+    Returns (full_response_text, speech_text, summary_text) all in the original language.
     """
     language_name = get_language_name(language_code)
 
@@ -77,8 +82,8 @@ def ask(query_text: str, language_code: str, user_id: int) -> tuple[str, str]:
     while history and history[0]["role"] != "user":
         history.pop(0)
 
-    full_response, summary = _parse_response(full_text)
-    return full_response, summary
+    full_response, speech_text, summary = _parse_response(full_text)
+    return full_response, speech_text, summary
 
 
 def clear_history(user_id: int) -> None:
@@ -87,9 +92,24 @@ def clear_history(user_id: int) -> None:
     _user_language.pop(user_id, None)
 
 
-def _parse_response(text: str) -> tuple[str, str]:
-    """Parse the RESPONSE: and SUMMARY: sections from Claude's output."""
+def _strip_urls_emails_phones(text: str) -> str:
+    """Remove URLs, email addresses, and phone numbers from text for TTS fallback."""
+    # URLs
+    text = re.sub(r'https?://[^\s<>\"\')\]]+|www\.[^\s<>\"\')\]]+', '', text)
+    # Emails
+    text = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '', text)
+    # Phone numbers (7+ digits)
+    text = re.sub(r'(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}', '', text)
+    # Collapse multiple spaces/blank lines
+    text = re.sub(r' {2,}', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
+def _parse_response(text: str) -> tuple[str, str, str]:
+    """Parse the RESPONSE:, SPEECH:, and SUMMARY: sections from Claude's output."""
     response_part = text
+    speech_part = ""
     summary_part = ""
 
     if "SUMMARY:" in text:
@@ -97,12 +117,20 @@ def _parse_response(text: str) -> tuple[str, str]:
         response_part = parts[0].strip()
         summary_part = parts[1].strip()
 
+    if "SPEECH:" in response_part:
+        parts = response_part.split("SPEECH:", 1)
+        response_part = parts[0].strip()
+        speech_part = parts[1].strip()
+
     if response_part.startswith("RESPONSE:"):
         response_part = response_part[len("RESPONSE:"):].strip()
+
+    if not speech_part:
+        speech_part = _strip_urls_emails_phones(response_part)
 
     if not summary_part:
         summary_part = response_part[:200]
         if len(response_part) > 200:
             summary_part += "..."
 
-    return response_part, summary_part
+    return response_part, speech_part, summary_part

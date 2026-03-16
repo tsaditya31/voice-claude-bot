@@ -7,12 +7,24 @@ import pytest
 
 # ── _parse_response ─────────────────────────────────────────────────
 
-def test_parse_response_with_both_sections():
+def test_parse_response_with_all_sections():
+    from services.claude import _parse_response
+
+    text = "RESPONSE:\nThis is the answer.\n\nSPEECH:\nThis is the spoken version.\n\nSUMMARY:\nShort summary."
+    response, speech, summary = _parse_response(text)
+    assert response == "This is the answer."
+    assert speech == "This is the spoken version."
+    assert summary == "Short summary."
+
+
+def test_parse_response_with_response_and_summary_only():
     from services.claude import _parse_response
 
     text = "RESPONSE:\nThis is the answer.\n\nSUMMARY:\nShort summary."
-    response, summary = _parse_response(text)
+    response, speech, summary = _parse_response(text)
     assert response == "This is the answer."
+    # No SPEECH section → fallback strips URLs (none here, so same text)
+    assert speech == "This is the answer."
     assert summary == "Short summary."
 
 
@@ -20,8 +32,9 @@ def test_parse_response_no_summary_section():
     from services.claude import _parse_response
 
     text = "RESPONSE:\nJust an answer with no summary marker."
-    response, summary = _parse_response(text)
+    response, speech, summary = _parse_response(text)
     assert response == "Just an answer with no summary marker."
+    assert speech == "Just an answer with no summary marker."
     assert summary == "Just an answer with no summary marker."
 
 
@@ -29,8 +42,9 @@ def test_parse_response_no_markers():
     from services.claude import _parse_response
 
     text = "Plain text without any markers."
-    response, summary = _parse_response(text)
+    response, speech, summary = _parse_response(text)
     assert response == "Plain text without any markers."
+    assert speech == "Plain text without any markers."
     assert summary == "Plain text without any markers."
 
 
@@ -38,7 +52,7 @@ def test_parse_response_long_text_truncates_summary():
     from services.claude import _parse_response
 
     text = "A" * 300
-    response, summary = _parse_response(text)
+    response, speech, summary = _parse_response(text)
     assert response == text
     assert summary == "A" * 200 + "..."
 
@@ -46,10 +60,38 @@ def test_parse_response_long_text_truncates_summary():
 def test_parse_response_summary_with_extra_whitespace():
     from services.claude import _parse_response
 
-    text = "RESPONSE:\n  Spaced answer  \n\nSUMMARY:\n  Spaced summary  "
-    response, summary = _parse_response(text)
+    text = "RESPONSE:\n  Spaced answer  \n\nSPEECH:\n  Spaced speech  \n\nSUMMARY:\n  Spaced summary  "
+    response, speech, summary = _parse_response(text)
     assert response == "Spaced answer"
+    assert speech == "Spaced speech"
     assert summary == "Spaced summary"
+
+
+def test_parse_response_speech_extracted_correctly():
+    from services.claude import _parse_response
+
+    text = (
+        "RESPONSE:\nCheck out https://example.com for details.\n\n"
+        "SPEECH:\nCheck out the link included below for details.\n\n"
+        "SUMMARY:\nLink shared."
+    )
+    response, speech, summary = _parse_response(text)
+    assert "https://example.com" in response
+    assert "https://example.com" not in speech
+    assert "link included below" in speech
+
+
+def test_parse_response_missing_speech_falls_back_to_cleaned():
+    from services.claude import _parse_response
+
+    text = (
+        "RESPONSE:\nVisit https://example.com or email test@example.com for help.\n\n"
+        "SUMMARY:\nHelp info."
+    )
+    response, speech, summary = _parse_response(text)
+    assert "https://example.com" in response
+    assert "https://example.com" not in speech
+    assert "test@example.com" not in speech
 
 
 # ── helpers ─────────────────────────────────────────────────────────
@@ -73,17 +115,18 @@ def _get_system_prompt(mock_client):
 # ── ask (with mocked Anthropic client) ──────────────────────────────
 
 @patch("services.claude.client")
-def test_ask_returns_response_and_summary(mock_client):
+def test_ask_returns_response_speech_and_summary(mock_client):
     import services.claude as mod
     mod.clear_history(1)
 
     mock_client.messages.create.return_value = _mock_claude_response(
-        "RESPONSE:\nHola amigo.\n\nSUMMARY:\nSaludo."
+        "RESPONSE:\nHola amigo.\n\nSPEECH:\nHola amigo.\n\nSUMMARY:\nSaludo."
     )
 
-    response, summary = mod.ask("Hola", "es-ES", user_id=1)
+    response, speech, summary = mod.ask("Hola", "es-ES", user_id=1)
 
     assert response == "Hola amigo."
+    assert speech == "Hola amigo."
     assert summary == "Saludo."
     assert "Spanish" in _get_system_prompt(mock_client)
 

@@ -150,23 +150,23 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         try:
             # 5. Ask Claude (with conversation history)
             user_id = update.effective_user.id
-            full_response, summary = await asyncio.get_event_loop().run_in_executor(
+            full_response, speech_text, summary = await asyncio.get_event_loop().run_in_executor(
                 None, claude.ask, transcript, detected_lang, user_id
             )
 
             logger.info(
-                "Claude response: %d chars, summary: %d chars",
-                len(full_response), len(summary),
+                "Claude response: %d chars, speech: %d chars, summary: %d chars",
+                len(full_response), len(speech_text), len(summary),
             )
 
-            # 6. Synthesize response to speech
+            # 6. Synthesize speech-optimized text to audio
             audio_bytes = await asyncio.get_event_loop().run_in_executor(
-                None, speech.synthesize, full_response, detected_lang
+                None, speech.synthesize, speech_text, detected_lang
             )
 
             logger.info(
                 "TTS audio: %d bytes (%.1f KB) for %d chars of text",
-                len(audio_bytes), len(audio_bytes) / 1024, len(full_response),
+                len(audio_bytes), len(audio_bytes) / 1024, len(speech_text),
             )
         finally:
             # Stop heartbeat
@@ -193,13 +193,15 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             caption=caption,
         )
 
-        # 9. Extract and send references (URLs, phone numbers, emails) as text
-        references = _extract_references(full_response)
-        if references:
-            ref_text = "\n".join(references)
+        # 9. Send full response as text so links/references are readable
+        if full_response:
+            # Telegram message limit is 4096 chars
+            text_reply = full_response
+            if len(text_reply) > 4096:
+                text_reply = text_reply[:4093] + "..."
             await update.message.reply_text(
-                f"📎 References:\n{ref_text}",
-                disable_web_page_preview=True,
+                text_reply,
+                disable_web_page_preview=False,
             )
 
     except Exception:

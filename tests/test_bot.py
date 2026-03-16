@@ -44,7 +44,7 @@ async def test_handle_voice_autodetect_flow(mock_claude, mock_speech, mock_ogg):
     from bot import handle_voice
 
     mock_speech.transcribe.return_value = ("Hola", "es-ES")
-    mock_claude.ask.return_value = ("Respuesta completa", "Resumen corto")
+    mock_claude.ask.return_value = ("Respuesta completa", "Respuesta hablada", "Resumen corto")
     mock_speech.synthesize.return_value = b"ogg-audio"
 
     update = _make_update(user_id=1)
@@ -55,8 +55,15 @@ async def test_handle_voice_autodetect_flow(mock_claude, mock_speech, mock_ogg):
     # Should call transcribe with None hint (auto-detect)
     mock_speech.transcribe.assert_called_once_with(b"fake-wav", None)
     mock_claude.ask.assert_called_once_with("Hola", "es-ES", 1)
-    mock_speech.synthesize.assert_called_once_with("Respuesta completa", "es-ES")
+    # TTS should receive speech_text, not full_response
+    mock_speech.synthesize.assert_called_once_with("Respuesta hablada", "es-ES")
     update.message.reply_voice.assert_called_once()
+    # Full response sent as text message
+    text_calls = [
+        c for c in update.message.reply_text.call_args_list
+        if c[0] and c[0][0] == "Respuesta completa"
+    ]
+    assert len(text_calls) == 1
 
 
 @pytest.mark.asyncio
@@ -68,7 +75,7 @@ async def test_handle_voice_with_language_hint(mock_claude, mock_speech, mock_og
     from bot import handle_voice
 
     mock_speech.transcribe.return_value = ("நன்றி", "ta-IN")
-    mock_claude.ask.return_value = ("பதில்", "சுருக்கம்")
+    mock_claude.ask.return_value = ("பதில்", "பேச்சு", "சுருக்கம்")
     mock_speech.synthesize.return_value = b"ogg-audio"
 
     update = _make_update(user_id=2)
@@ -136,7 +143,7 @@ async def test_handle_voice_caption_truncated(mock_claude, mock_speech, mock_ogg
     from bot import handle_voice
 
     mock_speech.transcribe.return_value = ("text", "es-ES")
-    mock_claude.ask.return_value = ("full", "S" * 1100)
+    mock_claude.ask.return_value = ("full", "speech", "S" * 1100)
     mock_speech.synthesize.return_value = b"audio"
 
     update = _make_update()
